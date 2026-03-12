@@ -21,6 +21,15 @@ export const auth = betterAuth({
   },
   plugins: [organization()],
   trustedOrigins: [process.env.FRONTEND_URL || 'http://localhost:3000'],
+  rateLimit: {
+    enabled: process.env.NODE_ENV === 'production',
+    window: 60,
+    max: 100,
+    customRules: {
+      '/sign-in/email': { window: 10, max: 5 },
+      '/sign-up/email': { window: 10, max: 5 },
+    },
+  },
   session: {
     cookieCache: {
       enabled: true,
