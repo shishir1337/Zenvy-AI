@@ -86,6 +86,55 @@ Each business is an **organization**. Users can belong to multiple organizations
 2. Create an organization from the sidebar switcher
 3. All data is isolated per organization
 
+## Inbox & Facebook Messenger
+
+The Inbox supports Facebook Messenger and Instagram DM. To receive real-time messages locally:
+
+1. **Expose backend** (choose one)
+
+   **Option A: Cloudflare Tunnel** (recommended for Meta webhooks – free, no interstitial)
+
+   ```bash
+   npx cloudflared tunnel --url http://localhost:3001
+   ```
+
+   **Option B: ngrok** (free tier may fail Meta verification – [Meta may block ngrok](https://stackoverflow.com/questions/78601258/ngrok-webhooks-not-getting-verified-in-meta-webhooks-callbackurl); paid plans work)
+
+   ```bash
+   ngrok http 3001
+   ```
+
+2. **Configure `.env`**
+
+   ```env
+   WEBHOOK_BASE_URL="https://YOUR-TUNNEL-URL"
+   FACEBOOK_APP_SECRET="your-app-secret"
+   FACEBOOK_WEBHOOK_VERIFY_TOKEN="your-custom-token"
+   ```
+
+3. **Meta App Dashboard**
+
+   - Go to [developers.facebook.com](https://developers.facebook.com) → Your App → Messenger → Settings
+   - Add a webhook: `https://YOUR-TUNNEL-URL/api/webhooks/facebook`
+   - **Verify token**: Use the exact same value as `FACEBOOK_WEBHOOK_VERIFY_TOKEN` (e.g. `subscribe` or a custom string)
+   - Subscribe to: `messages`, `messaging_postbacks`
+   - For Instagram: add Instagram Product and configure webhook similarly
+
+4. **Test verification manually**
+
+   Visit in a browser (replace with your URL and token):
+
+   ```
+   https://YOUR-TUNNEL-URL/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=subscribe&hub.challenge=hello
+   ```
+
+   You should see `hello` in the response. If you get 403, the verify token does not match.
+
+5. **Connect a Page**
+
+   - In the Inbox UI, click **Connect Channel**
+   - Enter Page ID, Page name, and Page access token from Meta Graph API Explorer
+
 ## License
 
 Private / UNLICENSED

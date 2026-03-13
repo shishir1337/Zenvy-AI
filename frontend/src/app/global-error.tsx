@@ -25,7 +25,7 @@ export default function GlobalError({
             Something went wrong
           </h2>
           <p style={{ color: '#6b7280', marginBottom: '1.5rem', textAlign: 'center' }}>
-            A critical error occurred. Please refresh the page.
+            {error?.message ?? 'A critical error occurred. Please refresh the page.'}
           </p>
           <button
             onClick={reset}

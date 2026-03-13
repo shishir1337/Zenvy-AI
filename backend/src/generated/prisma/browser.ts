@@ -57,3 +57,18 @@ export type Invitation = Prisma.InvitationModel
  * 
  */
 export type Product = Prisma.ProductModel
+/**
+ * Model Channel
+ * 
+ */
+export type Channel = Prisma.ChannelModel
+/**
+ * Model Conversation
+ * 
+ */
+export type Conversation = Prisma.ConversationModel
+/**
+ * Model Message
+ * 
+ */
+export type Message = Prisma.MessageModel

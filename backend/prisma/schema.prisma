@@ -84,8 +84,9 @@ model Organization {
   metadata  String?
   createdAt DateTime
 
-  members     Member[]
-  invitations Invitation[]
+  members      Member[]
+  invitations  Invitation[]
+  channels     Channel[]
 
   @@unique([slug])
   @@map("organization")
@@ -136,4 +137,61 @@ model Product {
 
   @@index([organizationId])
   @@map("product")
+}
+
+// ─── Inbox: Channels, Conversations, Messages ────────────────────────────────
+
+model Channel {
+  id               String   @id @default(cuid())
+  organizationId   String
+  type             String   // facebook | instagram
+  pageId           String
+  pageName         String
+  pageAccessToken  String   // encrypted
+  instagramAccountId String?
+  status           String   @default("active")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([organizationId, type, pageId])
+  @@index([organizationId])
+  @@map("channel")
+}
+
+model Conversation {
+  id                    String   @id @default(cuid())
+  channelId             String
+  externalId            String   // Graph API conversation ID
+  participantId         String   // PSID
+  participantName       String?
+  participantProfilePic String?
+  lastMessageAt         DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  channel  Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([channelId, externalId])
+  @@index([channelId])
+  @@map("conversation")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  externalId     String?  // Graph API message ID
+  direction      String   // inbound | outbound
+  content        String
+  attachments    String?  // JSON
+  metadata       String?  // JSON
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("message")
 }
