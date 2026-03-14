@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter } from 'events';
 
 export interface InboxEvent {
-  type: 'new_message' | 'new_conversation';
+  type: 'new_message' | 'new_conversation' | 'conversation_updated';
   conversationId: string;
   channelId: string;
 }
@@ -22,6 +22,16 @@ export class InboxEventService {
   ) {
     this.emitter.emit(`org:${organizationId}`, {
       type: 'new_message',
+      ...payload,
+    } as InboxEvent);
+  }
+
+  emitConversationUpdated(
+    organizationId: string,
+    payload: { conversationId: string; channelId: string },
+  ) {
+    this.emitter.emit(`org:${organizationId}`, {
+      type: 'conversation_updated',
       ...payload,
     } as InboxEvent);
   }

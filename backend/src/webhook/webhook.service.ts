@@ -129,8 +129,12 @@ export class WebhookService {
         externalId,
         participantId: senderId,
         participantName: null,
+        unread: true,
       },
-      update: { lastMessageAt: new Date() },
+      update: {
+        lastMessageAt: new Date(),
+        unread: true,
+      },
     });
 
     if (conversation.participantName === null) {

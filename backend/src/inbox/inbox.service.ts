@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { fetchWithTimeout } from '../common/fetch-with-timeout';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChannelService } from '../channel/channel.service';
+import { InboxEventService } from './inbox-event.service';
+import type { UpdateConversationDto } from './dto/update-conversation.dto';
 
 type EnrichedConversation = {
   id: string;
@@ -20,6 +22,7 @@ export class InboxService {
     private readonly prisma: PrismaService,
     private readonly channelService: ChannelService,
     private readonly config: ConfigService,
+    private readonly inboxEventService: InboxEventService,
   ) {}
 
   private getGraphApiUrl(path: string): string {
@@ -80,6 +83,43 @@ export class InboxService {
     });
   }
 
+  async updateConversation(
+    organizationId: string,
+    conversationId: string,
+    dto: UpdateConversationDto,
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+      include: { channel: { select: { id: true } } },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const data: { unread?: boolean; status?: string; notes?: string } = {};
+    if (dto.unread !== undefined) data.unread = dto.unread;
+    if (dto.status !== undefined) data.status = dto.status;
+    if (dto.notes !== undefined) data.notes = dto.notes;
+
+    const updated = await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data,
+      include: {
+        channel: {
+          select: { id: true, type: true, pageName: true, pageId: true },
+        },
+      },
+    });
+
+    this.inboxEventService.emitConversationUpdated(organizationId, {
+      conversationId,
+      channelId: conv.channelId,
+    });
+
+    return updated;
+  }
+
   async getConversation(organizationId: string, conversationId: string) {
     const conv = await this.prisma.conversation.findFirst({
       where: {
@@ -138,6 +178,161 @@ export class InboxService {
     return updated;
   }
 
+  async getLabelsForConversation(
+    organizationId: string,
+    conversationId: string,
+  ): Promise<{ id: string; page_label_name: string }[]> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+      include: { channel: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const channelWithToken = await this.channelService.getChannelWithToken(
+      conv.channelId,
+      organizationId,
+    );
+    if (!channelWithToken) return [];
+
+    return this.channelService.getLabelsForUser(
+      conv.participantId,
+      channelWithToken.pageAccessToken,
+    );
+  }
+
+  async listAvailableLabels(
+    organizationId: string,
+    conversationId: string,
+  ): Promise<{ id: string; page_label_name: string }[]> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+      include: { channel: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const channelWithToken = await this.channelService.getChannelWithToken(
+      conv.channelId,
+      organizationId,
+    );
+    if (!channelWithToken) return [];
+
+    return this.channelService.listCustomLabels(
+      conv.channel.pageId,
+      channelWithToken.pageAccessToken,
+    );
+  }
+
+  async assignLabel(
+    organizationId: string,
+    conversationId: string,
+    dto: { labelId?: string; labelName?: string },
+  ): Promise<{ success: boolean }> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+      include: { channel: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const channelWithToken = await this.channelService.getChannelWithToken(
+      conv.channelId,
+      organizationId,
+    );
+    if (!channelWithToken)
+      throw new ForbiddenException('Channel not found');
+
+    let labelId = dto.labelId;
+    if (!labelId && dto.labelName) {
+      const created = await this.channelService.createCustomLabel(
+        conv.channel.pageId,
+        channelWithToken.pageAccessToken,
+        dto.labelName,
+      );
+      labelId = created?.id ?? undefined;
+    }
+    if (!labelId) throw new ForbiddenException('labelId or labelName required');
+
+    const ok = await this.channelService.assignLabelToUser(
+      labelId,
+      conv.participantId,
+      channelWithToken.pageAccessToken,
+    );
+    return { success: ok };
+  }
+
+  async removeLabel(
+    organizationId: string,
+    conversationId: string,
+    labelId: string,
+  ): Promise<{ success: boolean }> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const channelWithToken = await this.channelService.getChannelWithToken(
+      conv.channelId,
+      organizationId,
+    );
+    if (!channelWithToken)
+      throw new ForbiddenException('Channel not found');
+
+    const ok = await this.channelService.removeLabelFromUser(
+      labelId,
+      conv.participantId,
+      channelWithToken.pageAccessToken,
+    );
+    return { success: ok };
+  }
+
+  async getAttachments(
+    organizationId: string,
+    conversationId: string,
+  ): Promise<{ type: string; url: string }[]> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const messages = await this.prisma.message.findMany({
+      where: { conversationId },
+      select: { attachments: true },
+    });
+
+    const result: { type: string; url: string }[] = [];
+    for (const msg of messages) {
+      if (!msg.attachments) continue;
+      let arr: Array<{ type?: string; payload?: { url?: string } }>;
+      try {
+        const parsed = JSON.parse(msg.attachments) as unknown;
+        arr = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        continue;
+      }
+      for (const a of arr) {
+        const url = a.payload?.url;
+        if (url) {
+          result.push({ type: a.type ?? 'file', url });
+        }
+      }
+    }
+    return result;
+  }
+
   async getMessages(
     organizationId: string,
     conversationId: string,
@@ -170,7 +365,12 @@ export class InboxService {
     };
   }
 
-  async reply(organizationId: string, conversationId: string, text: string) {
+  async uploadAttachment(
+    organizationId: string,
+    conversationId: string,
+    file: { buffer: Buffer; mimetype?: string; originalname?: string },
+  ): Promise<{ attachmentId: string; type: string } | null> {
+    if (!file?.buffer) return null;
     const conv = await this.prisma.conversation.findFirst({
       where: {
         id: conversationId,
@@ -186,10 +386,59 @@ export class InboxService {
     );
     if (!channelWithToken) throw new ForbiddenException('Channel not found');
 
+    const result = await this.channelService.uploadAttachment(
+      conv.channel.pageId,
+      channelWithToken.pageAccessToken,
+      {
+        buffer: file.buffer,
+        mimetype: file.mimetype ?? 'application/octet-stream',
+        originalname: file.originalname,
+      },
+    );
+    return result;
+  }
+
+  async reply(
+    organizationId: string,
+    conversationId: string,
+    dto: { text?: string; attachmentId?: string; attachmentType?: string },
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        channel: { organizationId },
+      },
+      include: { channel: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    if (!dto.text && !dto.attachmentId) {
+      throw new ForbiddenException('text or attachmentId required');
+    }
+
+    const channelWithToken = await this.channelService.getChannelWithToken(
+      conv.channelId,
+      organizationId,
+    );
+    if (!channelWithToken) throw new ForbiddenException('Channel not found');
+
     const url = new URL(
       this.getGraphApiUrl(`/${conv.channel.pageId}/messages`),
     );
     url.searchParams.set('access_token', channelWithToken.pageAccessToken);
+
+    let messagePayload: { text?: string; attachment?: { type: string; payload: { attachment_id: string } } };
+    if (dto.attachmentId) {
+      const attachmentType = dto.attachmentType ?? 'file';
+      messagePayload = {
+        attachment: {
+          type: attachmentType,
+          payload: { attachment_id: dto.attachmentId },
+        },
+      };
+    } else {
+      messagePayload = { text: dto.text! };
+    }
 
     const res = await fetchWithTimeout(url.toString(), {
       method: 'POST',
@@ -197,7 +446,7 @@ export class InboxService {
       body: JSON.stringify({
         recipient: { id: conv.participantId },
         messaging_type: 'RESPONSE',
-        message: { text },
+        message: messagePayload,
       }),
     });
 
@@ -216,12 +465,13 @@ export class InboxService {
       data: { lastMessageAt: new Date() },
     });
 
+    const content = dto.text ?? (dto.attachmentId ? '[Attachment]' : '');
     const message = await this.prisma.message.create({
       data: {
         conversationId,
         externalId: data.message_id ?? null,
         direction: 'outbound',
-        content: text,
+        content,
       },
     });
 

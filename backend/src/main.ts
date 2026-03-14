@@ -36,6 +36,9 @@ async function bootstrap() {
       next: express.NextFunction,
     ) => {
       if (req.path === '/api/webhooks/facebook') return next();
+      if (req.method === 'POST' && /^\/api\/conversations\/[^/]+\/upload-attachment$/.test(req.path)) {
+        return next();
+      }
       express.json()(req, res, next);
     },
   );

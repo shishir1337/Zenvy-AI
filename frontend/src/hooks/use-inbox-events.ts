@@ -7,7 +7,7 @@ const INITIAL_RECONNECT_MS = 3000;
 const MAX_RECONNECT_MS = 30000;
 
 export interface InboxEvent {
-  type: 'new_message' | 'new_conversation';
+  type: 'new_message' | 'new_conversation' | 'conversation_updated';
   conversationId: string;
   channelId: string;
 }

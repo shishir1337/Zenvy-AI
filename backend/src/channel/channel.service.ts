@@ -236,6 +236,149 @@ export class ChannelService {
     }
   }
 
+  async listCustomLabels(
+    pageId: string,
+    token: string,
+  ): Promise<{ id: string; page_label_name: string }[]> {
+    try {
+      const url = `${this.getGraphApiUrl(`/${pageId}/custom_labels`)}?fields=page_label_name&access_token=${encodeURIComponent(token)}`;
+      const res = await fetchWithTimeout(url);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+        this.logger.warn('listCustomLabels failed', body);
+        return [];
+      }
+      const data = (await res.json()) as {
+        data?: Array<{ id: string; page_label_name?: string }>;
+      };
+      return (data.data ?? []).map((l) => ({
+        id: l.id,
+        page_label_name: l.page_label_name ?? l.id,
+      }));
+    } catch (err) {
+      this.logger.warn('listCustomLabels error', err);
+      return [];
+    }
+  }
+
+  async createCustomLabel(
+    pageId: string,
+    token: string,
+    name: string,
+  ): Promise<{ id: string } | null> {
+    try {
+      const url = new URL(this.getGraphApiUrl(`/${pageId}/custom_labels`));
+      url.searchParams.set('access_token', token);
+      const res = await fetchWithTimeout(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page_label_name: name }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { id?: string };
+      return data.id ? { id: data.id } : null;
+    } catch (err) {
+      this.logger.warn('createCustomLabel error', err);
+      return null;
+    }
+  }
+
+  async getLabelsForUser(
+    psid: string,
+    token: string,
+  ): Promise<{ id: string; page_label_name: string }[]> {
+    try {
+      const url = `${this.getGraphApiUrl(`/${psid}/custom_labels`)}?fields=page_label_name&access_token=${encodeURIComponent(token)}`;
+      const res = await fetchWithTimeout(url);
+      if (!res.ok) return [];
+      const data = (await res.json()) as {
+        data?: Array<{ id: string; page_label_name?: string }>;
+      };
+      return (data.data ?? []).map((l) => ({
+        id: l.id,
+        page_label_name: l.page_label_name ?? l.id,
+      }));
+    } catch (err) {
+      this.logger.warn('getLabelsForUser error', err);
+      return [];
+    }
+  }
+
+  async assignLabelToUser(
+    labelId: string,
+    psid: string,
+    token: string,
+  ): Promise<boolean> {
+    try {
+      const url = new URL(this.getGraphApiUrl(`/${labelId}/label`));
+      url.searchParams.set('access_token', token);
+      url.searchParams.set('user', psid);
+      const res = await fetchWithTimeout(url.toString(), { method: 'POST' });
+      return res.ok;
+    } catch (err) {
+      this.logger.warn('assignLabelToUser error', err);
+      return false;
+    }
+  }
+
+  async uploadAttachment(
+    pageId: string,
+    token: string,
+    file: { buffer: Buffer; mimetype: string; originalname?: string },
+  ): Promise<{ attachmentId: string; type: string } | null> {
+    try {
+      const type = this.mimeToAttachmentType(file.mimetype);
+      const form = new FormData();
+      form.append('message', JSON.stringify({
+        attachment: { type, payload: {} },
+      }));
+      form.append('filedata', new Blob([new Uint8Array(file.buffer)], { type: file.mimetype }), file.originalname ?? 'file');
+      form.append('type', file.mimetype);
+
+      const url = `${this.getGraphApiUrl(`/${pageId}/message_attachments`)}?access_token=${encodeURIComponent(token)}`;
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        body: form,
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+        this.logger.warn('uploadAttachment failed', body);
+        return null;
+      }
+      const data = (await res.json()) as { attachment_id?: string };
+      const id = data.attachment_id ?? null;
+      return id ? { attachmentId: id, type } : null;
+    } catch (err) {
+      this.logger.warn('uploadAttachment error', err);
+      return null;
+    }
+  }
+
+  private mimeToAttachmentType(mime: string): 'image' | 'video' | 'audio' | 'file' {
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('video/')) return 'video';
+    if (mime.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  async removeLabelFromUser(
+    labelId: string,
+    psid: string,
+    token: string,
+  ): Promise<boolean> {
+    try {
+      const url = new URL(this.getGraphApiUrl(`/${labelId}/label`));
+      url.searchParams.set('access_token', token);
+      url.searchParams.set('user', psid);
+      const res = await fetchWithTimeout(url.toString(), { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      this.logger.warn('removeLabelFromUser error', err);
+      return false;
+    }
+  }
+
   private async subscribePageToWebhooks(
     pageId: string,
     token: string,

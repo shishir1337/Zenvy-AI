@@ -1403,6 +1403,9 @@ export const ConversationScalarFieldEnum = {
   participantName: 'participantName',
   participantProfilePic: 'participantProfilePic',
   lastMessageAt: 'lastMessageAt',
+  unread: 'unread',
+  status: 'status',
+  notes: 'notes',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const

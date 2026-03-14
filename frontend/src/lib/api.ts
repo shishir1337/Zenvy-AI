@@ -72,6 +72,8 @@ export async function disconnectChannel(id: string): Promise<{ success: boolean 
 }
 
 // Conversations
+export type ConversationStatus = 'inbox' | 'follow_up' | 'done';
+
 export interface Conversation {
   id: string;
   channelId: string;
@@ -80,6 +82,9 @@ export interface Conversation {
   participantName: string | null;
   participantProfilePic?: string | null;
   lastMessageAt: string;
+  unread?: boolean;
+  status?: ConversationStatus;
+  notes?: string | null;
   channel: { id: string; type: string; pageName: string };
   messages?: { content: string; direction: string }[];
 }
@@ -91,6 +96,71 @@ export async function listConversations(channelId?: string): Promise<Conversatio
 
 export async function getConversation(id: string): Promise<Conversation> {
   return apiFetch<Conversation>(`/conversations/${id}`);
+}
+
+export async function updateConversation(
+  id: string,
+  data: { unread?: boolean; status?: ConversationStatus; notes?: string }
+): Promise<Conversation> {
+  return apiFetch<Conversation>(`/conversations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export interface ConversationAttachment {
+  type: string;
+  url: string;
+}
+
+export async function getConversationAttachments(
+  conversationId: string
+): Promise<ConversationAttachment[]> {
+  return apiFetch<ConversationAttachment[]>(
+    `/conversations/${conversationId}/attachments`
+  );
+}
+
+export interface CustomLabel {
+  id: string;
+  page_label_name: string;
+}
+
+export async function getConversationLabels(
+  conversationId: string
+): Promise<CustomLabel[]> {
+  return apiFetch<CustomLabel[]>(`/conversations/${conversationId}/labels`);
+}
+
+export async function getAvailableLabels(
+  conversationId: string
+): Promise<CustomLabel[]> {
+  return apiFetch<CustomLabel[]>(
+    `/conversations/${conversationId}/labels/available`
+  );
+}
+
+export async function assignLabelToConversation(
+  conversationId: string,
+  data: { labelId?: string; labelName?: string }
+): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(
+    `/conversations/${conversationId}/labels`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function removeLabelFromConversation(
+  conversationId: string,
+  labelId: string
+): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(
+    `/conversations/${conversationId}/labels/${labelId}`,
+    { method: 'DELETE' }
+  );
 }
 
 export interface Message {
@@ -120,12 +190,38 @@ export async function getMessages(
   return apiFetch<MessagesResponse>(`/conversations/${conversationId}/messages${qs}`);
 }
 
+export async function uploadAttachment(
+  conversationId: string,
+  file: File
+): Promise<{ attachmentId: string; type: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const res = await fetch(`${API_URL}/api/conversations/${conversationId}/upload-attachment`, {
+    credentials: 'include',
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    const message = Array.isArray(body.message)
+      ? body.message.join(', ')
+      : typeof body.message === 'string'
+        ? body.message
+        : typeof body.error === 'string'
+          ? body.error
+          : res.statusText;
+    throw new Error(message || 'Upload failed');
+  }
+  return res.json();
+}
+
 export async function replyToConversation(
   conversationId: string,
-  text: string
+  data: { text?: string; attachmentId?: string; attachmentType?: string }
 ): Promise<Message> {
   return apiFetch<Message>(`/conversations/${conversationId}/reply`, {
     method: 'POST',
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(data),
   });
 }

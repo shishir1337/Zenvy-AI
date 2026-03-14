@@ -169,6 +169,9 @@ model Conversation {
   participantName       String?
   participantProfilePic String?
   lastMessageAt         DateTime @default(now())
+  unread                Boolean  @default(false)
+  status                String   @default("inbox") // inbox | follow_up | done
+  notes                 String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

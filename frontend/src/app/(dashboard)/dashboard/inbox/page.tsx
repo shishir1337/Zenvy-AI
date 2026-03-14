@@ -9,10 +9,19 @@ import {
   getConversation,
   getMessages,
   replyToConversation,
+  uploadAttachment,
+  updateConversation,
+  getConversationAttachments,
+  getConversationLabels,
+  getAvailableLabels,
+  assignLabelToConversation,
+  removeLabelFromConversation,
   getFacebookPageInfo,
   type Channel,
   type Conversation,
   type Message,
+  type ConversationAttachment,
+  type CustomLabel,
 } from '@/lib/api';
 import { useInboxEvents } from '@/hooks/use-inbox-events';
 import { Button } from '@/components/ui/button';
@@ -34,6 +43,16 @@ import {
   Trash2,
   Loader2,
   MessageCircle,
+  MoreVertical,
+  Flag,
+  Mail,
+  CheckCircle,
+  Paperclip,
+  Image,
+  File,
+  Video,
+  Tag,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -41,6 +60,18 @@ import {
   AvatarFallback,
   AvatarImage,
 } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 function getInitials(nameOrId: string): string {
   const trimmed = nameOrId.trim();
@@ -117,6 +148,7 @@ export default function InboxPage() {
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [replyText, setReplyText] = useState('');
+  const [replyFile, setReplyFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -133,6 +165,10 @@ export default function InboxPage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<Channel | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
+  const [labels, setLabels] = useState<CustomLabel[]>([]);
+  const [availableLabels, setAvailableLabels] = useState<CustomLabel[]>([]);
 
   const refreshChannels = useCallback(async () => {
     try {
@@ -185,10 +221,52 @@ export default function InboxPage() {
     refreshMessages();
   }, [refreshMessages]);
 
+  const refreshAttachments = useCallback(async () => {
+    if (!selectedConversation) {
+      setAttachments([]);
+      return;
+    }
+    try {
+      const data = await getConversationAttachments(selectedConversation.id);
+      setAttachments(data);
+    } catch {
+      setAttachments([]);
+    }
+  }, [selectedConversation]);
+
+  const refreshLabels = useCallback(async () => {
+    if (!selectedConversation) {
+      setLabels([]);
+      setAvailableLabels([]);
+      return;
+    }
+    try {
+      const [userLabels, pageLabels] = await Promise.all([
+        getConversationLabels(selectedConversation.id),
+        getAvailableLabels(selectedConversation.id),
+      ]);
+      setLabels(userLabels);
+      setAvailableLabels(pageLabels);
+    } catch {
+      setLabels([]);
+      setAvailableLabels([]);
+    }
+  }, [selectedConversation]);
+
+  useEffect(() => {
+    refreshAttachments();
+  }, [refreshAttachments]);
+
+  useEffect(() => {
+    refreshLabels();
+  }, [refreshLabels]);
+
   useInboxEvents((event) => {
     refreshConversations();
     if (selectedConversation && event.conversationId === selectedConversation.id) {
       refreshMessages();
+      refreshAttachments();
+      refreshLabels();
     }
   });
 
@@ -240,17 +318,66 @@ export default function InboxPage() {
 
   const handleSelectConversation = async (conv: Conversation) => {
     setSelectedConversation(conv);
-    if (conv.participantName) return;
+    setSidebarOpen(true);
+    if (conv.unread) {
+      try {
+        const updated = await updateConversation(conv.id, { unread: false });
+        setSelectedConversation((prev) =>
+          prev?.id === updated.id ? { ...prev, ...updated } : prev
+        );
+        setConversations((prev) =>
+          prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
+        );
+      } catch {
+        // ignore
+      }
+    }
+    if (!conv.participantName) {
+      try {
+        const fresh = await getConversation(conv.id);
+        setSelectedConversation((prev) =>
+          prev?.id === fresh.id ? { ...prev, ...fresh } : prev
+        );
+        setConversations((prev) =>
+          prev.map((c) => (c.id === fresh.id ? { ...c, ...fresh } : c))
+        );
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const handleNotesSave = async (notes: string) => {
+    if (!selectedConversation) return;
     try {
-      const fresh = await getConversation(conv.id);
+      const updated = await updateConversation(selectedConversation.id, {
+        notes: notes || undefined,
+      });
       setSelectedConversation((prev) =>
-        prev?.id === fresh.id ? { ...prev, ...fresh } : prev
+        prev?.id === updated.id ? { ...prev, ...updated } : prev
       );
       setConversations((prev) =>
-        prev.map((c) => (c.id === fresh.id ? { ...c, ...fresh } : c))
+        prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
       );
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+    }
+  };
+
+  const handleConversationAction = async (
+    id: string,
+    data: { unread?: boolean; status?: 'inbox' | 'follow_up' | 'done' }
+  ) => {
+    try {
+      const updated = await updateConversation(id, data);
+      setSelectedConversation((prev) =>
+        prev?.id === updated.id ? { ...prev, ...updated } : prev
+      );
+      setConversations((prev) =>
+        prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
+      );
+    } catch (err) {
+      console.error('Failed to update conversation:', err);
     }
   };
 
@@ -270,15 +397,35 @@ export default function InboxPage() {
 
   const handleReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedConversation || !replyText.trim()) return;
+    if (!selectedConversation) return;
+    const hasText = replyText.trim().length > 0;
+    const hasFile = !!replyFile;
+    if (!hasText && !hasFile) return;
     setSending(true);
     setReplyError(null);
     try {
-      const msg = await replyToConversation(selectedConversation.id, replyText.trim());
-      setMessages((prev) => [...prev, msg]);
-      setReplyText('');
+      if (hasText) {
+        const msg = await replyToConversation(selectedConversation.id, {
+          text: replyText.trim(),
+        });
+        setMessages((prev) => [...prev, msg]);
+        setReplyText('');
+      }
+      if (hasFile) {
+        const { attachmentId, type } = await uploadAttachment(
+          selectedConversation.id,
+          replyFile!
+        );
+        const msg = await replyToConversation(selectedConversation.id, {
+          attachmentId,
+          attachmentType: type as 'image' | 'video' | 'audio' | 'file',
+        });
+        setMessages((prev) => [...prev, msg]);
+        setReplyFile(null);
+      }
       setReplyError(null);
       await refreshConversations();
+      await refreshAttachments();
     } catch (err) {
       setReplyError(err instanceof Error ? err.message : 'Failed to send');
     } finally {
@@ -513,7 +660,8 @@ export default function InboxPage() {
                     )}
                     onClick={() => handleSelectConversation(conv)}
                   >
-                    <Avatar size="sm" className="shrink-0">
+                    <div className="relative shrink-0">
+                      <Avatar size="sm">
                       {conv.participantProfilePic ? (
                         <AvatarImage
                           src={conv.participantProfilePic}
@@ -526,6 +674,13 @@ export default function InboxPage() {
                         )}
                       </AvatarFallback>
                     </Avatar>
+                      {conv.unread && (
+                        <span
+                          className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-primary"
+                          aria-label="Unread"
+                        />
+                      )}
+                    </div>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                       <span className="truncate font-medium">
                         {conv.participantName || conv.participantId}
@@ -544,30 +699,71 @@ export default function InboxPage() {
           <div className="flex flex-1 flex-col min-w-0 rounded-lg border">
             {selectedConversation ? (
               <>
-                <div className="flex items-center gap-3 border-b px-4 py-3">
-                  <Avatar size="lg" className="shrink-0">
-                    {selectedConversation.participantProfilePic ? (
-                      <AvatarImage
-                        src={selectedConversation.participantProfilePic}
-                        alt=""
-                      />
-                    ) : null}
-                    <AvatarFallback>
-                      {getInitials(
-                        selectedConversation.participantName ||
-                          selectedConversation.participantId
-                      )}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">
-                      {selectedConversation.participantName ||
-                        selectedConversation.participantId}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedConversation.channel.pageName}
-                    </p>
+                <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar size="lg" className="shrink-0">
+                      {selectedConversation.participantProfilePic ? (
+                        <AvatarImage
+                          src={selectedConversation.participantProfilePic}
+                          alt=""
+                        />
+                      ) : null}
+                      <AvatarFallback>
+                        {getInitials(
+                          selectedConversation.participantName ||
+                            selectedConversation.participantId
+                        )}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">
+                        {selectedConversation.participantName ||
+                          selectedConversation.participantId}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedConversation.channel.pageName}
+                      </p>
+                    </div>
                   </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Button variant="ghost" size="icon" className="shrink-0">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() =>
+                          handleConversationAction(selectedConversation.id, {
+                            status: 'follow_up',
+                          })
+                        }
+                      >
+                        <Flag className="h-4 w-4" />
+                        Mark as follow up
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          handleConversationAction(selectedConversation.id, {
+                            unread: true,
+                          })
+                        }
+                      >
+                        <Mail className="h-4 w-4" />
+                        Mark as unread
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          handleConversationAction(selectedConversation.id, {
+                            status: 'done',
+                          })
+                        }
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Move to done
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   {messagesLoading && messages.length === 0 ? (
@@ -596,25 +792,65 @@ export default function InboxPage() {
                 </div>
                 <form
                   onSubmit={handleReply}
-                  className="flex gap-2 border-t p-3"
+                  className="flex flex-col gap-2 border-t p-3"
                 >
-                  <Input
-                    placeholder="Type a message..."
-                    value={replyText}
-                    onChange={(e) => {
-                      setReplyText(e.target.value);
-                      if (replyError) setReplyError(null);
-                    }}
-                    disabled={sending}
-                    className="flex-1"
-                  />
-                  <Button type="submit" size="icon" disabled={sending || !replyText.trim()}>
-                    {sending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </Button>
+                  {replyFile && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Paperclip className="h-4 w-4" />
+                      <span className="truncate">{replyFile.name}</span>
+                      <button
+                        type="button"
+                        className="text-destructive hover:underline"
+                        onClick={() => setReplyFile(null)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="file"
+                      id="reply-file"
+                      className="hidden"
+                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) setReplyFile(f);
+                        e.target.value = '';
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => document.getElementById('reply-file')?.click()}
+                      disabled={sending}
+                      title="Attach file"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                    <Input
+                      placeholder="Type a message..."
+                      value={replyText}
+                      onChange={(e) => {
+                        setReplyText(e.target.value);
+                        if (replyError) setReplyError(null);
+                      }}
+                      disabled={sending}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="submit"
+                      size="icon"
+                      disabled={sending || (!replyText.trim() && !replyFile)}
+                    >
+                      {sending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </form>
                 {replyError && (
                   <p className="px-3 pb-2 text-sm text-destructive">{replyError}</p>
@@ -627,6 +863,172 @@ export default function InboxPage() {
               </div>
             )}
           </div>
+
+          {/* Conversation detail sidebar */}
+          <Sheet open={sidebarOpen && !!selectedConversation} onOpenChange={setSidebarOpen}>
+            <SheetContent side="right" className="w-full sm:max-w-md">
+              {selectedConversation && (
+                <>
+                  <SheetHeader>
+                    <SheetTitle>Conversation details</SheetTitle>
+                  </SheetHeader>
+                  <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pb-4">
+                    {/* Contact Details */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-muted-foreground">Contact</h4>
+                      <div className="flex items-center gap-3 border rounded-lg p-3">
+                        <Avatar size="lg">
+                          {selectedConversation.participantProfilePic ? (
+                            <AvatarImage
+                              src={selectedConversation.participantProfilePic}
+                              alt=""
+                            />
+                          ) : null}
+                          <AvatarFallback>
+                            {getInitials(
+                              selectedConversation.participantName ||
+                                selectedConversation.participantId
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium truncate">
+                            {selectedConversation.participantName ||
+                              selectedConversation.participantId}
+                          </p>
+                          <p className="text-xs text-muted-foreground font-mono">
+                            PSID: {selectedConversation.participantId}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedConversation.channel.pageName}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tags */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-muted-foreground">Tags</h4>
+                      {labels.length === 0 && availableLabels.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No tags</p>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-1">
+                            {labels.map((l) => (
+                              <span
+                                key={l.id}
+                                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
+                              >
+                                {l.page_label_name}
+                                <button
+                                  type="button"
+                                  className="hover:text-destructive"
+                                  onClick={() => {
+                                    removeLabelFromConversation(
+                                      selectedConversation.id,
+                                      l.id
+                                    ).then(() => refreshLabels());
+                                  }}
+                                  aria-label={`Remove ${l.page_label_name}`}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                          {availableLabels.filter(
+                            (a) => !labels.some((l) => l.id === a.id)
+                          ).length > 0 && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger>
+                                <Button variant="outline" size="sm" className="h-7">
+                                  <Tag className="h-3 w-3" />
+                                  Add tag
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent>
+                                {availableLabels
+                                  .filter((a) => !labels.some((l) => l.id === a.id))
+                                  .map((a) => (
+                                    <DropdownMenuItem
+                                      key={a.id}
+                                      onClick={() => {
+                                        assignLabelToConversation(
+                                          selectedConversation.id,
+                                          { labelId: a.id }
+                                        ).then(() => refreshLabels());
+                                      }}
+                                    >
+                                      {a.page_label_name}
+                                    </DropdownMenuItem>
+                                  ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Notes */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-muted-foreground">Notes</h4>
+                      <textarea
+                        key={selectedConversation.id}
+                        className="w-full min-h-[100px] rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder="Add notes about this conversation..."
+                        defaultValue={selectedConversation.notes ?? ''}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v !== (selectedConversation.notes ?? '')) {
+                            handleNotesSave(v);
+                          }
+                        }}
+                      />
+                    </div>
+
+                    {/* Shared Files */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-muted-foreground">Shared files</h4>
+                      {attachments.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No attachments yet</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {attachments.map((a, i) => {
+                            const Icon =
+                              a.type === 'image'
+                                ? Image
+                                : a.type === 'video'
+                                  ? Video
+                                  : File;
+                            return (
+                              <li key={i}>
+                                <a
+                                  href={a.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                                >
+                                  <Icon className="h-4 w-4 shrink-0" />
+                                  <span className="truncate">
+                                    {a.type === 'image'
+                                      ? 'Image'
+                                      : a.type === 'video'
+                                        ? 'Video'
+                                        : 'File'}{' '}
+                                    {i + 1}
+                                  </span>
+                                </a>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </SheetContent>
+          </Sheet>
         </div>
       )}
     </div>
