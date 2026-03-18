@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { authClient } from '@/lib/auth-client';
 import {
   DropdownMenu,
@@ -11,9 +12,21 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export function OrgSwitcher() {
+  const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
   const { data: orgs } = authClient.useListOrganizations();
   const [creating, setCreating] = useState(false);
+
+  // Auto-select organization when user has only one and none is active
+  useEffect(() => {
+    if (!orgs || orgs.length !== 1 || activeOrg) return;
+    const org = orgs[0];
+    if (org) {
+      authClient.organization.setActive({ organizationId: org.id }).then(() => {
+        router.refresh();
+      });
+    }
+  }, [orgs, activeOrg, router]);
 
   const handleSetActive = async (orgId: string) => {
     await authClient.organization.setActive({ organizationId: orgId });
@@ -36,12 +49,12 @@ export function OrgSwitcher() {
       <DropdownMenuTrigger
         className="flex w-full items-center justify-start gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground"
       >
-          <span className="flex h-5 w-5 items-center justify-center rounded bg-primary text-[10px] font-bold text-primary-foreground">
-            {activeOrg?.name?.[0]?.toUpperCase() || '?'}
-          </span>
-          <span className="truncate">
-            {activeOrg?.name || 'Select organization'}
-          </span>
+        <span className="flex h-5 w-5 items-center justify-center rounded bg-primary text-[10px] font-bold text-primary-foreground">
+          {activeOrg?.name?.[0]?.toUpperCase() || '?'}
+        </span>
+        <span className="truncate">
+          {activeOrg?.name || 'Select organization'}
+        </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
         {orgs?.map((org) => (

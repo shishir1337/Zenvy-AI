@@ -466,12 +466,22 @@ export class InboxService {
     });
 
     const content = dto.text ?? (dto.attachmentId ? '[Attachment]' : '');
+    const attachmentsJson =
+      dto.attachmentId && dto.attachmentType
+        ? JSON.stringify([
+            {
+              type: dto.attachmentType,
+              payload: { attachment_id: dto.attachmentId },
+            },
+          ])
+        : null;
     const message = await this.prisma.message.create({
       data: {
         conversationId,
         externalId: data.message_id ?? null,
         direction: 'outbound',
         content,
+        attachments: attachmentsJson,
       },
     });
 

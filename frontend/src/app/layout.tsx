@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -28,7 +29,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}
         suppressHydrationWarning
       >
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
       </body>
     </html>
   );

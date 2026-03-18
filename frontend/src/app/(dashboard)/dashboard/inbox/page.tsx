@@ -66,12 +66,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 
 function getInitials(nameOrId: string): string {
   const trimmed = nameOrId.trim();
@@ -108,8 +103,59 @@ function MessageContent({ msg }: { msg: Message }) {
   const imageUrls = imageAttachments
     .map((a) => a.payload?.url)
     .filter((u): u is string => !!u);
+  const videoAttachments = attachments.filter((a) => (a.type ?? 'file') === 'video');
+  const videoUrls = videoAttachments
+    .map((a) => a.payload?.url)
+    .filter((u): u is string => !!u);
+  const fileAttachments = attachments.filter(
+    (a) => (a.type ?? 'file') !== 'image' && (a.type ?? 'file') !== 'video'
+  );
   const isLabel = /^\[.*\]$/.test(msg.content || '');
   const hasText = msg.content && !isLabel;
+  const isOutboundAttachment =
+    msg.content === '[Attachment]' && attachments.length > 0 && !imageUrls.length && !videoUrls.length;
+
+  const AttachmentPlaceholder = ({
+    type,
+    url,
+  }: {
+    type: string;
+    url?: string;
+  }) => {
+    const label = type === 'image' ? 'Image' : type === 'video' ? 'Video' : type === 'audio' ? 'Audio' : 'File';
+    const Icon = type === 'image' ? Image : type === 'video' ? Video : type === 'audio' ? File : File;
+    if (url && type === 'image') {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={label}
+            className="max-w-[200px] max-h-[200px] w-full h-auto object-cover rounded-lg"
+          />
+        </a>
+      );
+    }
+    if (url && (type === 'video' || type === 'file' || type === 'audio')) {
+      return (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
+        >
+          <Icon className="h-5 w-5 shrink-0" />
+          <span>{label}</span>
+        </a>
+      );
+    }
+    return (
+      <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+        <Icon className="h-5 w-5 shrink-0" />
+        <span>{label}</span>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -117,24 +163,28 @@ function MessageContent({ msg }: { msg: Message }) {
       {imageUrls.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 max-w-[280px]">
           {imageUrls.map((url, i) => (
-            <a
-              key={i}
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block rounded overflow-hidden"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={url}
-                alt=""
-                className="max-w-[120px] max-h-[120px] w-full h-auto object-cover"
-              />
-            </a>
+            <AttachmentPlaceholder key={i} type="image" url={url} />
           ))}
         </div>
       )}
-      {!hasText && imageUrls.length === 0 && (
+      {videoUrls.length > 0 &&
+        videoUrls.map((url, i) => (
+          <AttachmentPlaceholder key={i} type="video" url={url} />
+        ))}
+      {fileAttachments
+        .filter((a) => a.payload?.url)
+        .map((a, i) => (
+          <AttachmentPlaceholder
+            key={i}
+            type={a.type ?? 'file'}
+            url={a.payload?.url}
+          />
+        ))}
+      {isOutboundAttachment &&
+        attachments.map((a, i) => (
+          <AttachmentPlaceholder key={i} type={a.type ?? 'file'} />
+        ))}
+      {!hasText && imageUrls.length === 0 && videoUrls.length === 0 && !isOutboundAttachment && (
         <p className="whitespace-pre-wrap break-words">{msg.content || '(no content)'}</p>
       )}
     </div>
@@ -165,7 +215,7 @@ export default function InboxPage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<Channel | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'inbox' | 'follow_up' | 'done'>('all');
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([]);
   const [labels, setLabels] = useState<CustomLabel[]>([]);
   const [availableLabels, setAvailableLabels] = useState<CustomLabel[]>([]);
@@ -318,7 +368,6 @@ export default function InboxPage() {
 
   const handleSelectConversation = async (conv: Conversation) => {
     setSelectedConversation(conv);
-    setSidebarOpen(true);
     if (conv.unread) {
       try {
         const updated = await updateConversation(conv.id, { unread: false });
@@ -441,18 +490,62 @@ export default function InboxPage() {
     );
   }
 
+  const filteredConversations =
+    statusFilter === 'all'
+      ? conversations
+      : conversations.filter((c) => (c.status ?? 'inbox') === statusFilter);
+
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold tracking-tight">Inbox</h2>
-        <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-          {channels.length > 0 && (
-            <Button size="sm" onClick={() => setConnectOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Connect Channel
-            </Button>
-          )}
-          <DialogContent>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger>
+              <Button variant="outline" size="sm">
+                <MessageCircle className="mr-2 h-4 w-4" />
+                {channels.length === 0
+                  ? 'Channels'
+                  : selectedChannelId
+                    ? channels.find((c) => c.id === selectedChannelId)?.pageName ?? 'All channels'
+                    : 'All channels'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onClick={() => setSelectedChannelId(null)}>
+                All channels
+              </DropdownMenuItem>
+              {channels.map((ch) => (
+                <DropdownMenuItem
+                  key={ch.id}
+                  onClick={() => setSelectedChannelId(ch.id)}
+                  className="flex items-center justify-between"
+                >
+                  <span className="truncate">{ch.pageName}</span>
+                  <button
+                    type="button"
+                    className="ml-2 rounded p-1 hover:bg-destructive/10 text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDisconnectClick(ch);
+                    }}
+                    title="Disconnect"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setConnectOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Connect Channel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
+        <DialogContent>
             <form onSubmit={handleConnect}>
               <DialogHeader>
                 <DialogTitle>Connect Facebook Page</DialogTitle>
@@ -562,9 +655,9 @@ export default function InboxPage() {
                 </Button>
               </DialogFooter>
             </form>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={!!disconnectTarget} onOpenChange={(open) => !open && setDisconnectTarget(null)}>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!disconnectTarget} onOpenChange={(open) => !open && setDisconnectTarget(null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Disconnect channel</DialogTitle>
@@ -582,7 +675,6 @@ export default function InboxPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
 
       {channels.length === 0 ? (
         <Card className="flex flex-1 flex-col items-center justify-center gap-4 p-12">
@@ -599,94 +691,90 @@ export default function InboxPage() {
           </Button>
         </Card>
       ) : (
-        <div className="flex flex-1 min-h-0 gap-4">
-          {/* Channels sidebar */}
-          <div className="flex w-48 shrink-0 flex-col gap-2">
-            <p className="text-xs font-medium text-muted-foreground">Channels</p>
-            <div className="flex flex-col gap-1 overflow-y-auto">
-              {channels.map((ch) => (
-                <div
-                  key={ch.id}
-                  className="group flex items-center justify-between rounded-lg border px-3 py-2"
-                >
-                  <button
-                    type="button"
-                    className={cn(
-                      'flex min-w-0 flex-1 items-center gap-2 text-left text-sm',
-                      selectedChannelId === ch.id
-                        ? 'font-medium text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    )}
-                    onClick={() => setSelectedChannelId(selectedChannelId === ch.id ? null : ch.id)}
-                  >
-                    <MessageCircle className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{ch.pageName}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 rounded p-1 hover:bg-destructive/10 text-destructive"
-                    onClick={() => handleDisconnectClick(ch)}
-                    title="Disconnect"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
+        <div className="flex flex-1 min-h-0 gap-0">
           {/* Conversations list */}
-          <div className="flex w-72 shrink-0 flex-col gap-2 overflow-hidden rounded-lg border">
-            <div className="border-b px-3 py-2">
-              <p className="text-sm font-medium">Conversations</p>
+          <div className="flex w-80 shrink-0 flex-col gap-0 overflow-hidden border-r">
+            <div className="flex border-b px-2">
+              {(['all', 'inbox', 'follow_up', 'done'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={cn(
+                    'px-3 py-2 text-sm font-medium transition-colors',
+                    statusFilter === s
+                      ? 'border-b-2 border-primary text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {s === 'all' ? 'All' : s === 'inbox' ? 'Inbox' : s === 'follow_up' ? 'Follow up' : 'Done'}
+                </button>
+              ))}
             </div>
             <div className="flex-1 overflow-y-auto">
               {conversationsLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
-              ) : conversations.length === 0 ? (
+              ) : filteredConversations.length === 0 ? (
                 <div className="p-4 text-center text-sm text-muted-foreground">
                   No conversations yet
                 </div>
               ) : (
-                conversations.map((conv) => (
+                filteredConversations.map((conv) => (
                   <button
                     key={conv.id}
                     type="button"
                     className={cn(
                       'flex w-full items-center gap-3 border-b px-3 py-3 text-left transition-colors hover:bg-muted/50',
-                      selectedConversation?.id === conv.id && 'bg-muted'
+                      selectedConversation?.id === conv.id && 'bg-muted',
+                      conv.unread && 'bg-primary/5'
                     )}
                     onClick={() => handleSelectConversation(conv)}
                   >
                     <div className="relative shrink-0">
                       <Avatar size="sm">
-                      {conv.participantProfilePic ? (
-                        <AvatarImage
-                          src={conv.participantProfilePic}
-                          alt=""
-                        />
-                      ) : null}
-                      <AvatarFallback>
-                        {getInitials(
-                          conv.participantName || conv.participantId
-                        )}
-                      </AvatarFallback>
-                    </Avatar>
+                        {conv.participantProfilePic ? (
+                          <AvatarImage src={conv.participantProfilePic} alt="" />
+                        ) : null}
+                        <AvatarFallback>
+                          {getInitials(conv.participantName || conv.participantId)}
+                        </AvatarFallback>
+                      </Avatar>
                       {conv.unread && (
                         <span
-                          className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-primary"
+                          className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-background"
                           aria-label="Unread"
                         />
                       )}
                     </div>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="truncate font-medium">
-                        {conv.participantName || conv.participantId}
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            'truncate',
+                            conv.unread ? 'font-semibold' : 'font-medium'
+                          )}
+                        >
+                          {conv.participantName || conv.participantId}
+                        </span>
+                        {(conv.status === 'follow_up' || conv.status === 'done') && (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              conv.status === 'follow_up'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                            )}
+                          >
+                            {conv.status === 'follow_up' ? 'Follow up' : 'Done'}
+                          </span>
+                        )}
+                      </div>
                       <span className="truncate text-xs text-muted-foreground">
-                        {conv.messages?.[0]?.content ?? 'No messages'}
+                        {conv.messages?.[0]?.content === '[Attachment]'
+                          ? 'Attachment'
+                          : conv.messages?.[0]?.content ?? 'No messages'}
                       </span>
                     </div>
                   </button>
@@ -716,10 +804,32 @@ export default function InboxPage() {
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
-                      <p className="font-medium truncate">
-                        {selectedConversation.participantName ||
-                          selectedConversation.participantId}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium truncate">
+                          {selectedConversation.participantName ||
+                            selectedConversation.participantId}
+                        </p>
+                        {selectedConversation.unread && (
+                          <span className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                            Unread
+                          </span>
+                        )}
+                        {(selectedConversation.status === 'follow_up' ||
+                          selectedConversation.status === 'done') && (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              selectedConversation.status === 'follow_up'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                            )}
+                          >
+                            {selectedConversation.status === 'follow_up'
+                              ? 'Follow up'
+                              : 'Done'}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {selectedConversation.channel.pageName}
                       </p>
@@ -732,6 +842,26 @@ export default function InboxPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() =>
+                          handleConversationAction(selectedConversation.id, {
+                            status: 'inbox',
+                          })
+                        }
+                      >
+                        <Mail className="h-4 w-4" />
+                        Move back to inbox
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          handleConversationAction(selectedConversation.id, {
+                            unread: false,
+                          })
+                        }
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Mark as read
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() =>
                           handleConversationAction(selectedConversation.id, {
@@ -864,15 +994,13 @@ export default function InboxPage() {
             )}
           </div>
 
-          {/* Conversation detail sidebar */}
-          <Sheet open={sidebarOpen && !!selectedConversation} onOpenChange={setSidebarOpen}>
-            <SheetContent side="right" className="w-full sm:max-w-md">
-              {selectedConversation && (
-                <>
-                  <SheetHeader>
-                    <SheetTitle>Conversation details</SheetTitle>
-                  </SheetHeader>
-                  <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pb-4">
+          {/* Conversation details column - fixed right like FB Messenger */}
+          {selectedConversation && (
+            <div className="flex w-80 shrink-0 flex-col border-l bg-muted/30 overflow-hidden">
+              <div className="border-b px-4 py-3">
+                <h4 className="text-sm font-medium">Conversation details</h4>
+              </div>
+              <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-4">
                     {/* Contact Details */}
                     <div className="space-y-2">
                       <h4 className="text-sm font-medium text-muted-foreground">Contact</h4>
@@ -1024,11 +1152,9 @@ export default function InboxPage() {
                         </ul>
                       )}
                     </div>
-                  </div>
-                </>
-              )}
-            </SheetContent>
-          </Sheet>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
